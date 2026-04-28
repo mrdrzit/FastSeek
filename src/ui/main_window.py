@@ -4,7 +4,7 @@ import os
 from typing import List, Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer, QThread
+from PySide6.QtCore import Qt, QTimer, QThread, QSettings
 from PySide6.QtGui import QImage, QPixmap, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QWidget,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QLineEdit,
     QProgressBar,
+    QCheckBox,
 )
 
 from src.core.frame_cache import FrameCache
@@ -84,6 +85,31 @@ class VideoViewer(QWidget):
         self.slider.setMaximum(0)
         self.slider.setTracking(True)
 
+        self.settings = QSettings("FastSeek", "FastSeekApp")
+
+        self.default_folder_edit = QLineEdit()
+        self.default_folder_edit.setPlaceholderText("Select default save folder")
+        
+        self.default_folder_btn = QPushButton("Get Folder")
+        self.use_default_folder_cb = QCheckBox("Use for next save without prompting")
+
+        last_folder = self.settings.value("default_save_folder", "")
+        if last_folder:
+            self.default_folder_edit.setText(str(last_folder))
+            
+        use_default = self.settings.value("use_default_save_folder", False)
+        if isinstance(use_default, str):
+            use_default = use_default.lower() == "true"
+        self.use_default_folder_cb.setChecked(bool(use_default))
+
+        self.default_folder_btn.clicked.connect(self.select_default_folder)
+        self.use_default_folder_cb.toggled.connect(self.save_checkbox_state)
+
+        folder_row = QHBoxLayout()
+        folder_row.addWidget(self.default_folder_edit)
+        folder_row.addWidget(self.default_folder_btn)
+        folder_row.addWidget(self.use_default_folder_cb)
+
         top_row = QHBoxLayout()
         top_row.addWidget(self.open_button)
         top_row.addWidget(self.prev_button)
@@ -93,6 +119,7 @@ class VideoViewer(QWidget):
         top_row.addStretch(1)
 
         layout = QVBoxLayout(self)
+        layout.addLayout(folder_row)
         layout.addLayout(top_row)
         layout.addWidget(self.image_label, stretch=1)
         layout.addWidget(self.loading_main_label)
@@ -450,18 +477,39 @@ class VideoViewer(QWidget):
             )
             self.image_label.setPixmap(scaled)
 
+    def select_default_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select default save folder",
+            self.default_folder_edit.text() or ""
+        )
+        if folder:
+            self.default_folder_edit.setText(folder)
+            self.settings.setValue("default_save_folder", folder)
+
+    def save_checkbox_state(self, checked: bool) -> None:
+        self.settings.setValue("use_default_save_folder", checked)
+
     def export_current_frame(self) -> None:
 
         if self.session is None:
             return
 
-        output_root = QFileDialog.getExistingDirectory(
-            self,
-            "Select export folder",
-        )
+        if self.use_default_folder_cb.isChecked() and self.default_folder_edit.text():
+            output_root = self.default_folder_edit.text()
+        else:
+            start_dir = self.default_folder_edit.text() or ""
+            output_root = QFileDialog.getExistingDirectory(
+                self,
+                "Select export folder",
+                start_dir
+            )
 
-        if not output_root:
-            return
+            if not output_root:
+                return
+            
+            self.default_folder_edit.setText(output_root)
+            self.settings.setValue("default_save_folder", output_root)
 
         frame_index = self.current_index
         frame_count = self.session.frame_count
